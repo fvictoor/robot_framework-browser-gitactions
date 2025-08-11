@@ -1,0 +1,87 @@
+name: Testes Automatizados Phoenix
+
+on:
+  workflow_dispatch:
+    inputs:
+      processes:
+        description: "Quantidade de processos para o Pabot"
+        required: true
+        default: "4"
+      titulo_execucao:
+        description: "Título do relatório de execução"
+        required: true
+        default: "🚀 Relatório de Testes - Projeto Phoenix"
+      tags_dashboard:
+        description: "Tags para o dashboard (separadas por vírgula)"
+        required: true
+        default: "cadastro,positivo,negativo"
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      # Python estável
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      # Node.js instável
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "node"
+
+      - name: Instalar dependências Python
+        run: |
+          pip install --upgrade pip
+          pip install robotframework robotframework-browser robotframework-faker robotframework-pabot pandas Jinja2 python-dotenv requests
+
+      - name: Inicializar Browser Library
+        run: rfbrowser init
+
+      - name: Executar Testes
+        continue-on-error: true
+        run: |
+          pabot --testlevelsplit --processes ${{ github.event.inputs.processes }} --outputdir ./log --include frontend ./tests/
+
+      - name: Executar Retestes
+        if: always()
+        run: |
+          if [ -f ./log/output.xml ] && grep -i 'status="FAIL"' ./log/output.xml > /dev/null; then
+            echo "Falhas encontradas. Rodando retestes..."
+            pabot --testlevelsplit --processes ${{ github.event.inputs.processes }} --outputdir ./log/rerun --rerunfailed ./log/output.xml ./tests/
+          else
+            echo "Nenhuma falha encontrada. Pulando retestes."
+          fi
+
+      - name: Enviar relatório Webhook
+        continue-on-error: true
+        run: |
+          python ./libs/report_robotframework_webhook/report/report_webhook.py ./log/output.xml ./log/rerun/output.xml --titulo "${{ github.event.inputs.titulo_execucao }}"
+
+      - name: Gerar dashboard
+        continue-on-error: true
+        run: |
+          python ./libs/robot_report_dashboard/robot_report_dashboard/main.py ./log/output.xml ./log/rerun/output.xml --tags "${{ github.event.inputs.tags_dashboard }}" --output_dir ./log --filename report.html
+
+      - name: Enviar dashboard via e-mail
+        continue-on-error: true
+        if: success() && hashFiles('./log/report.html') != ''
+        run: |
+          echo "Relatório encontrado. Enviando e-mail..."
+          python ./libs/robot_report_email/robot_report_email/disparador_email.py ./log/report.html
+      
+      - name: Gerar Timestamp para o Artefato
+        run: echo "TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_ENV
+
+      - name: Fazer upload dos logs de execução
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-execucao-${{ env.TIMESTAMP }}
+          path: ./log

@@ -1,0 +1,8 @@
+robotframework
+robotframework-browser
+robotframework-faker
+robotframework-pabot
+requests
+pandas
+Jinja2
+python-dotenv
